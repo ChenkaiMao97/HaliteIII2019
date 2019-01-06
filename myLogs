@@ -3,3 +3,7 @@ strategies tried:
 1. game_map: naive_navigation improvement: two direction choose the one with smaller halite
 
 2. 
+
+size	total		ave		ship
+56*56 	310000 		98 		~18  
+32*32 	216000 		210 	~22

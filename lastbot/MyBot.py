@@ -31,13 +31,13 @@ game_map = game.game_map
 me = game.me
 
 #constant control variables:
-RETURN_COEFF = 0.85  # above which percentage of MAX_HALITE we return
-IGNORE_COEFF = 0.08  # under which percentage of MAX_HALITE we ignore that cell
+RETURN_COEFF = 0.9  # above which percentage of MAX_HALITE we return
+IGNORE_COEFF = 0.05  # under which percentage of MAX_HALITE we ignore that cell
 EXPLORE_AGAIN = 0.25 # under which percentage of MAX_HALITE go back to explore
 LOCAL_RANDOM_TO_DESTINATION = 0.3 # coeffienent for transition from local random walk to heading to destination
 MAX_SHIP_SEED = 0.8
 MAX_ENERGY_POINTS = 10
-DISTANCE_TO_BUILD_DROPOFF = 20
+DISTANCE_TO_BUILD_DROPOFF = 12
 MAX_DROPOFF_SEED = 1/32
 
 MAX_SHIP = round(MAX_SHIP_SEED*game_map.width)
@@ -68,21 +68,19 @@ for i in range(game_map.width):
         totalEnergy += game_map[Position(j,i)].halite_amount
 playerNumber = len(game.players.keys())
 aveEnergy = totalEnergy/game_map.width/game_map.height
-if aveEnergy<130:
-    MAX_SHIP = 36-playerNumber
-    if(game_map.width<50):
+if aveEnergy<140:
+    MAX_SHIP = 28-2*playerNumber
+    if(game_map.width<48):
         MAX_DROPOFF_NUMBER = 1
-elif aveEnergy<170:
-    MAX_SHIP = 42-playerNumber
+elif aveEnergy<180:
+    MAX_SHIP = 38-2*playerNumber
 elif game_map.width<50:
-    MAX_SHIP = 48-playerNumber
+    MAX_SHIP = 46-2*playerNumber
 else:
-    MAX_SHIP = 54-playerNumber
+    MAX_SHIP = 54-2*playerNumber
 
-if(playerNumber == 2 and game_map.width>50):
-    MAX_DROPOFF_NUMBER += 1
 # As soon as you call "ready" function below, the 2 second per turn timer will start.
-game.ready("bigNumber")
+game.ready("bot12")
 
 # Now that your bot is initialized, save a message to yourself in the log file with some important information.
 #   Here, you log here your id, which you can always fetch from the game object by using my_id.
@@ -150,7 +148,7 @@ while True:
                     ship_status[ship.id] = "heading"
                     ship.destination = random.choice(maxEnergyPos[0:3])
 
-            if game_map.calculate_distance(ship.position,thisDropOff.position)>(constants.MAX_TURNS-game.turn_number)-12:
+            if game_map.calculate_distance(ship.position,thisDropOff.position)>(constants.MAX_TURNS-game.turn_number)-18:
                 ship_status[ship.id] = "finalReturning"
                 ship.destination = thisDropOff.position
                 move = game_map.naive_navigate(ship, thisDropOff.position,finalReturn = True)
@@ -301,10 +299,7 @@ while True:
                         continue
                     else:
                         pass # heading to dropoff position
-                elif(game.turn_number>THIRD_BUILD_PORT and game.turn_number<FOUTRH_STOP_BUILD_PORT and len(me.get_dropoffs()) < MAX_DROPOFF_NUMBER \
-                        and min([game_map.calculate_distance(ship.position,bestDropOffPosList[i]) for i in range(len(bestDropOffPosList))])< DISTANCE_TO_BUILD_DROPOFF)\
-                        and topAverage>15000:
-                    
+                elif(game.turn_number>THIRD_BUILD_PORT and game.turn_number<FOUTRH_STOP_BUILD_PORT and len(me.get_dropoffs()) < MAX_DROPOFF_NUMBER and min([game_map.calculate_distance(ship.position,bestDropOffPosList[i]) for i in range(len(bestDropOffPosList))])< DISTANCE_TO_BUILD_DROPOFF):
                     disList = [game_map.calculate_distance(ship.position,bestDropOffPosList[i]) for i in range(len(bestDropOffPosList))]
                     minIndex = disList.index(min(disList))
                     ship.destination = bestDropOffPosList[minIndex]

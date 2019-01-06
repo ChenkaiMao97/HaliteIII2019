@@ -42,4 +42,36 @@ def generateString():
 
 	return mystring,myDict
 
+def cross(dict1,dict2):
+	return	{"RETURN_COEFF": (dict1["RETURN_COEFF"]+dict2["RETURN_COEFF"])/2, \
+			 "IGNORE_COEFF":(dict1["IGNORE_COEFF"]+dict2["IGNORE_COEFF"])/2,  \
+			 "EXPLORE_AGAIN":(dict1["EXPLORE_AGAIN"]+dict2["EXPLORE_AGAIN"])/2, \
+			 "LOCAL_RANDOM_TO_DESTINATION":(dict1["LOCAL_RANDOM_TO_DESTINATION"]+dict2["LOCAL_RANDOM_TO_DESTINATION"])/2, \
+			 "MAX_SHIP_SEED":(dict1["MAX_SHIP_SEED"]+dict2["MAX_SHIP_SEED"])/2, \
+			 "MAX_DROP_OFF_SEED":(dict1["MAX_SHIP_SEED"]+dict2["MAX_SHIP_SEED"])/2, \
+			 "MAX_ENERGY_POINTS":int(dict1["MAX_ENERGY_POINTS"]+dict2["MAX_ENERGY_POINTS"])/2, \
+			 "DISTANCE_TO_BUILD_DROPOFF":int(dict1["DISTANCE_TO_BUILD_DROPOFF"]+dict2["DISTANCE_TO_BUILD_DROPOFF"])/2, \
+			 "BIGFISH_AMOUNT":int(dict1["BIGFISH_AMOUNT"]+dict2["BIGFISH_AMOUNT"])/2, \
+			 "FIRST_BUILD_SHIP":int(dict1["FIRST_BUILD_SHIP"]+dict2["FIRST_BUILD_SHIP"])/2, \
+			 "SECOND_MONEY_FOR_PORT":int(dict1["SECOND_MONEY_FOR_PORT"]+dict2["SECOND_MONEY_FOR_PORT"])/2, \
+			 "THIRD_BUILD_PORT":int(dict1["THIRD_BUILD_PORT"]+dict2["THIRD_BUILD_PORT"])/2, \
+			 "FOUTRH_STOP_BUILD_PORT":int(dict1["FOUTRH_STOP_BUILD_PORT"]+dict2["FOUTRH_STOP_BUILD_PORT"])/2}
+
+def mutate(dict1):
+	dict1["RETURN_COEFF"] += random.uniform(-0.05,0.05)
+	dict1["IGNORE_COEFF"] += random.uniform(-0.05,0.05)
+	dict1["EXPLORE_AGAIN"] += random.uniform(-0.1,0.1)
+	dict1["LOCAL_RANDOM_TO_DESTINATION"] += random.uniform(-0.1,0.1)
+	dict1["MAX_SHIP_SEED"] += random.uniform(-0.15,0.15)
+	dict1["MAX_DROP_OFF_SEED"] += random.uniform(-0.02,0.02)
+	dict1["MAX_ENERGY_POINTS"] += random.randint(-3,3)
+	dict1["DISTANCE_TO_BUILD_DROPOFF"] += random.randint(-4,4)
+	dict1["BIGFISH_AMOUNT"] += random.randint(-100,100)
+	dict1["FIRST_BUILD_SHIP"] += random.randint(-20,20)
+	dict1["SECOND_MONEY_FOR_PORT"] += random.randint(-20,20)
+	dict1["THIRD_BUILD_PORT"] += random.randint(-20,20)
+	dict1["FOUTRH_STOP_BUILD_PORT"] += random.randint(-20,20)
+	return dict1
+
+
 subprocess.call(["./myBash.sh",generateString()[0], generateString()[0]])

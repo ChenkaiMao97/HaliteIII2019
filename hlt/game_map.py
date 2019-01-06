@@ -76,6 +76,8 @@ class GameMap:
         self.game = game
         self.energyMap = np.zeros((self.width,self.height))
         self.dropoffPosList = [game.me.shipyard.position]
+        self.myStartPositions = {}
+        
 
     def __getitem__(self, location):
         """
@@ -89,6 +91,18 @@ class GameMap:
         elif isinstance(location, Entity):
             return self._cells[location.position.y][location.position.x]
         return None
+
+    def opponentNumber(self,pos):
+        posNeighbors = []
+        posNeighbors.append(pos.directional_offset(Direction.North))
+        posNeighbors.append(pos.directional_offset(Direction.South))
+        posNeighbors.append(pos.directional_offset(Direction.East))
+        posNeighbors.append(pos.directional_offset(Direction.West))
+        oppoNumber = 0
+        for item in posNeighbors:
+            if(self[item].is_occupied and self[item].ship.owner != self.game.me.id):
+                oppoNumber += 1
+        return oppoNumber
     
     def maxEnergyPositions(self, n = MAX_ENERGY_POINTS):
         positionList = []
@@ -104,12 +118,14 @@ class GameMap:
 
     def convolveMax(self,kernelSize = 8, padding = 0, stride = 4):
         # energyMap = self.energyMap.copy()
-        newWidth = (self.width-kernelSize)//(stride)+1
-        newHeight = (self.height-kernelSize)//(stride)+1
+        newWidth = self.width//stride
+        newHeight = self.height//stride
         convolvedMap = np.zeros((newWidth,newHeight))
         for i in range(newWidth):
             for j in range(newHeight):
-                convolvedMap[i][j] = np.sum(self.energyMap[i*stride:i*stride+kernelSize,j*stride:j*stride+kernelSize])
+                for iterx in range(kernelSize):
+                    for itery in range(kernelSize):
+                        convolvedMap[i][j] += self.energyMap[(i*stride+iterx)%self.width,(j*stride+itery)%self.height]
         originalMap = convolvedMap.copy()
 
         convolvedMaxPos = []
@@ -122,7 +138,7 @@ class GameMap:
             for pos in maxList:
                 convolvedMap[pos[1]][pos[0]] = 0
 
-        topAverage = topAverage/10
+        topAverage = topAverage/20
 
         haliteSort1 = [(convolvedMaxPos[i],i) for i in range(len(convolvedMaxPos))]
         
@@ -137,7 +153,7 @@ class GameMap:
         while self[calculate_position(average[0])].structure:
             average[0][0][1]+=1
 
-        return [calculate_position(average[i]) for i in range(5)],[calculate_position(average[i]) for i in range(len(average))],topAverage
+        return [calculate_position(average[i]) for i in range(12)],[calculate_position(average[i]) for i in range(len(average))],topAverage
 
     def calculate_distance(self, source, target):
         """
@@ -188,61 +204,24 @@ class GameMap:
         source = self.normalize(source)
         destination = self.normalize(destination)
         possible_moves = []
+        secondary_moves = []
         distance = Position(abs(destination.x-source.x), abs(destination.y-source.y))
         y_cardinality, x_cardinality = self._get_target_direction(source, destination)
 
         if distance.x != 0:
             possible_moves.append(x_cardinality if distance.x < (self.width / 2)
                                   else Direction.invert(x_cardinality))
-        elif extra:
-            possible_moves.append((1,0))
-            possible_moves.append((-1,0))
+        else:
+            secondary_moves.append((1,0))
+            secondary_moves.append((-1,0))
         if distance.y != 0:
             possible_moves.append(y_cardinality if distance.y < (self.height / 2)
                                   else Direction.invert(y_cardinality))
-        elif extra:
-            possible_moves.append((0,1))
-            possible_moves.append((0,-1))
-        return possible_moves
-
-    def outward_navigate(self,ship,source, maxHalite = True):
-        """
-        Returns a singular safe move towards the destination.
-
-        :param ship: The ship to move.
-        :param destination: Ending position
-        :return: A direction.
-        """
-        # No need to normalize destination, since get_unsafe_moves
-        # does that
-        choices = []
-        invertDirections = []
-        for direction in self.get_unsafe_moves(source.position, ship.position):
-            target_pos = ship.position.directional_offset(direction)
-            if not self[target_pos].is_occupied:
-                choices.append((target_pos,direction))
-        if(len(choices) == 1):
-            self[ship.position].ship = None
-            self[choices[0][0]].mark_unsafe(ship)
-            return choices[0][1]
-        elif(len(choices) == 2):
-            if(self[choices[0][0]].halite_amount <= self[choices[1][0]].halite_amount):
-                self[ship.position].ship = None
-                self[choices[0][0]].mark_unsafe(ship)
-                return choices[0][1]
-            else:
-                self[ship.position].ship = None
-                self[choices[1][0]].mark_unsafe(ship)
-                return choices[1][1]
-        elif(len(choices) > 2):
-            randChoice = random.choice(choices)
-            self[ship.position].ship = None
-            self[randChoice[0]].mark_unsafe(ship)
-            return randChoice[1]
         else:
-            #no best choices
-            return Direction.Still            
-        return Direction.Still
+            secondary_moves.append((0,1))
+            secondary_moves.append((0,-1))
+        return possible_moves,secondary_moves
+
     def naive_navigate(self, ship, destination,maxHalite = False,finalReturn = False):
         """
         Returns a singular safe move towards the destination.
@@ -253,54 +232,84 @@ class GameMap:
         """
         # No need to normalize destination, since get_unsafe_moves
         # does that
-        if ship.halite_amount < 0.1*self[ship.position].halite_amount:
-            return Direction.Still
+        # choices = [(ship.position,Direction.Still)] if not self[target_pos].is_occupied else []
         choices = []
+        secondary_choices = []
         invertDirections = []
-        for direction in self.get_unsafe_moves(ship.position, destination):
+        invert_choices = []
+        possible_moves,secondary_moves = self.get_unsafe_moves(ship.position, destination)
+        
+        for direction in possible_moves:
             invertDirections.append(Direction.invert(direction))
             target_pos = ship.position.directional_offset(direction)
-            if not self[target_pos].is_occupied or (finalReturn and (target_pos==self.game.players[ship.owner].shipyard.position)):
+            if not self[target_pos].is_occupied or (finalReturn and (target_pos==ship.destination)):
                 choices.append((target_pos,direction))
             elif self[target_pos].ship.owner != ship.owner and self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
                 choices.append((target_pos,direction))
-        costMinChoice = sorted(choices,key = lambda x : self[x[0]].halite_amount,reverse = maxHalite)
-        disMinChoice = sorted(choices,key = lambda x : self.calculate_distance(x[0],destination))
-        # if randomWalk and len(costMinChoice)>0:
-        #     thisRand = random.randint(0,1)
-        #     if(thisRand == 0):
-        #         return costMinChoice[0][1]
-        #     else:
-        #         randChoice = random.choice(costMinChoice)
-        #         return randChoice[1]
-        if(len(choices) >= 1):
-            if maxHalite:
-                self[ship.position].ship = None
-                self[costMinChoice[0][0]].mark_unsafe(ship)
-                return costMinChoice[0][1]
-            else:
-                thisRand = random.randint(0,4)
-                if(thisRand<=0):
-                    self[ship.position].ship = None
-                    self[costMinChoice[0][0]].mark_unsafe(ship)
-                    return costMinChoice[0][1]
-                else:
-                    self[ship.position].ship = None
-                    self[disMinChoice[0][0]].mark_unsafe(ship)
-                    return disMinChoice[0][1]
-        else:
-            #no best choices
-            thisRand = random.randint(0,9)
-            if(thisRand<7):
+
+        for direction in secondary_moves:
+            target_pos = ship.position.directional_offset(direction)
+            if not self[target_pos].is_occupied or (finalReturn and (target_pos==self.game.players[ship.owner].shipyard.position)):
+                secondary_choices.append((target_pos,direction))
+            elif self[target_pos].ship.owner != ship.owner and self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
+                secondary_choices.append((target_pos,direction))
+
+        for direction in invertDirections:
+            target_pos = ship.position.directional_offset(direction)
+            if not self[target_pos].is_occupied or (finalReturn and (target_pos==self.game.players[ship.owner].shipyard.position)):
+                invert_choices.append((target_pos,direction))
+            elif self[target_pos].ship.owner != ship.owner and self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
+                invert_choices.append((target_pos,direction))
+
+        oppoList = [(self.opponentNumber(ship.position),ship.position,Direction.Still)] if not self[ship.position].is_occupied else []
+        for item in choices:
+            oppoList.append((self.opponentNumber(item[0]),item[0],item[1]))
+        for item in secondary_choices:
+            oppoList.append((self.opponentNumber(item[0]),item[0],item[1]))
+        for item in invert_choices:
+            oppoList.append((self.opponentNumber(item[0]),item[0],item[1]))
+        oppoList.sort(key = lambda x : x[0])
+        if(len(oppoList) == 0):
+            pass # TO DO!
+        elif(len(oppoList) == 1):
+            self[oppoList[0][1]].mark_unsafe(ship)
+            return oppoList[0][2]
+        elif(oppoList[0][0]<oppoList[1][0]):
+            self[oppoList[0][1]].mark_unsafe(ship)
+            return oppoList[0][2]
+        elif (len(oppoList) >= 3):
+            for item in oppoList[2:]:
+                if item[0] > oppoList[0][0]:
+                    if (item[1],item[2]) in choices:
+                        choices.remove((item[1],item[2]))
+                    if (item[1],item[2]) in secondary_choices:
+                        secondary_choices.remove((item[1],item[2]))
+                    if (item[1],item[2]) in invert_choices:
+                        invert_choices.remove((item[1],item[2]))
+        if(len(choices)>=1):
+            costMinChoice = sorted(choices,key = lambda x : self[x[0]].halite_amount,reverse = maxHalite)            
+            self[costMinChoice[0][0]].mark_unsafe(ship)
+            return costMinChoice[0][1]
+        elif not self[ship.position].is_occupied:
+            thisRand = random.randint(0,5)
+            if(thisRand<=4): # 6/7 chance stay
+                self[ship.position].mark_unsafe(ship)
                 return Direction.Still
-            else:
-                for badchoice in invertDirections:
-                    target_pos = ship.position.directional_offset(badchoice)
-                    if not self[target_pos].is_occupied or (finalReturn and (target_pos==self.game.players[ship.owner].shipyard.position)):
-                        self[ship.position].ship = None
-                        self[target_pos].mark_unsafe(ship)
-                        return badchoice
-        return Direction.Still
+        
+        #to this point: no best moves and not choose stay or can't stay
+        if len(secondary_choices)>=1:
+            randomChoice = random.choice(secondary_choices)
+            self[randomChoice[0]].mark_unsafe(ship)
+            return randomChoice[1]
+        elif not self[ship.position].is_occupied:
+            self[ship.position].mark_unsafe(ship)
+            return Direction.Still
+        elif len(invert_choices)>=1:    #no best choices
+            randomChoice = random.choice(invert_choices)
+            self[randomChoice[0]].mark_unsafe(ship)
+            return randomChoice[1]
+        else: #every move will crash: TO DO: trace the moves and change one by one to resolve
+            return "buildDropoff"
 
     @staticmethod
     def _generate(game):

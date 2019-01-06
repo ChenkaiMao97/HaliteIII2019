@@ -76,7 +76,6 @@ class GameMap:
         self.game = game
         self.energyMap = np.zeros((self.width,self.height))
         self.dropoffPosList = [game.me.shipyard.position]
-        self.myStartPositions = {}
         
 
     def __getitem__(self, location):
@@ -91,18 +90,6 @@ class GameMap:
         elif isinstance(location, Entity):
             return self._cells[location.position.y][location.position.x]
         return None
-
-    def opponentNumber(self,pos):
-        posNeighbors = []
-        posNeighbors.append(pos.directional_offset(Direction.North))
-        posNeighbors.append(pos.directional_offset(Direction.South))
-        posNeighbors.append(pos.directional_offset(Direction.East))
-        posNeighbors.append(pos.directional_offset(Direction.West))
-        oppoNumber = 0
-        for item in posNeighbors:
-            if(self[item].is_occupied and self[item].ship.owner != self.game.me.id):
-                oppoNumber += 1
-        return oppoNumber
     
     def maxEnergyPositions(self, n = MAX_ENERGY_POINTS):
         positionList = []
@@ -118,14 +105,12 @@ class GameMap:
 
     def convolveMax(self,kernelSize = 8, padding = 0, stride = 4):
         # energyMap = self.energyMap.copy()
-        newWidth = self.width//stride
-        newHeight = self.height//stride
+        newWidth = (self.width-kernelSize)//(stride)+1
+        newHeight = (self.height-kernelSize)//(stride)+1
         convolvedMap = np.zeros((newWidth,newHeight))
         for i in range(newWidth):
             for j in range(newHeight):
-                for iterx in range(kernelSize):
-                    for itery in range(kernelSize):
-                        convolvedMap[i][j] += self.energyMap[(i*stride+iterx)%self.width,(j*stride+itery)%self.height]
+                convolvedMap[i][j] = np.sum(self.energyMap[i*stride:i*stride+kernelSize,j*stride:j*stride+kernelSize])
         originalMap = convolvedMap.copy()
 
         convolvedMaxPos = []
@@ -138,7 +123,7 @@ class GameMap:
             for pos in maxList:
                 convolvedMap[pos[1]][pos[0]] = 0
 
-        topAverage = topAverage/20
+        topAverage = topAverage/10
 
         haliteSort1 = [(convolvedMaxPos[i],i) for i in range(len(convolvedMaxPos))]
         
@@ -153,7 +138,7 @@ class GameMap:
         while self[calculate_position(average[0])].structure:
             average[0][0][1]+=1
 
-        return [calculate_position(average[i]) for i in range(8)],[calculate_position(average[i]) for i in range(len(average))],topAverage
+        return [calculate_position(average[i]) for i in range(5)],[calculate_position(average[i]) for i in range(len(average))],topAverage
 
     def calculate_distance(self, source, target):
         """
@@ -242,7 +227,7 @@ class GameMap:
         for direction in possible_moves:
             invertDirections.append(Direction.invert(direction))
             target_pos = ship.position.directional_offset(direction)
-            if not self[target_pos].is_occupied or (finalReturn and (target_pos==ship.destination)):
+            if not self[target_pos].is_occupied or (finalReturn and (target_pos==self.game.players[ship.owner].shipyard.position)):
                 choices.append((target_pos,direction))
             elif self[target_pos].ship.owner != ship.owner and self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
                 choices.append((target_pos,direction))
@@ -261,38 +246,13 @@ class GameMap:
             elif self[target_pos].ship.owner != ship.owner and self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
                 invert_choices.append((target_pos,direction))
 
-        oppoList = [(self.opponentNumber(ship.position),ship.position,Direction.Still)] if not self[ship.position].is_occupied else []
-        for item in choices:
-            oppoList.append((self.opponentNumber(item[0]),item[0],item[1]))
-        for item in secondary_choices:
-            oppoList.append((self.opponentNumber(item[0]),item[0],item[1]))
-        for item in invert_choices:
-            oppoList.append((self.opponentNumber(item[0]),item[0],item[1]))
-        oppoList.sort(key = lambda x : x[0])
-        if(len(oppoList) == 0):
-            pass # TO DO!
-        elif(len(oppoList) == 1):
-            self[oppoList[0][1]].mark_unsafe(ship)
-            return oppoList[0][2]
-        elif(oppoList[0][0]<oppoList[1][0]):
-            self[oppoList[0][1]].mark_unsafe(ship)
-            return oppoList[0][2]
-        elif (len(oppoList) >= 3):
-            for item in oppoList[2:]:
-                if item[0] > oppoList[0][0]:
-                    if (item[1],item[2]) in choices:
-                        choices.remove((item[1],item[2]))
-                    if (item[1],item[2]) in secondary_choices:
-                        secondary_choices.remove((item[1],item[2]))
-                    if (item[1],item[2]) in invert_choices:
-                        invert_choices.remove((item[1],item[2]))
         if(len(choices)>=1):
             costMinChoice = sorted(choices,key = lambda x : self[x[0]].halite_amount,reverse = maxHalite)            
             self[costMinChoice[0][0]].mark_unsafe(ship)
             return costMinChoice[0][1]
         elif not self[ship.position].is_occupied:
-            thisRand = random.randint(0,5)
-            if(thisRand<=4): # 6/7 chance stay
+            thisRand = random.randint(0,2)
+            if(thisRand<=1): # 66.7% chance stay
                 self[ship.position].mark_unsafe(ship)
                 return Direction.Still
         
