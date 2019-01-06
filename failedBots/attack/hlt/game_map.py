@@ -6,6 +6,8 @@ from .entity import Entity, Shipyard, Ship, Dropoff
 from .player import Player
 from .positionals import Direction, Position
 from .common import read_input
+import logging
+
 MAX_ENERGY_POINTS = 15
 
 class MapCell:
@@ -70,6 +72,8 @@ class GameMap:
     Coordinates start at 0. Coordinates are normalized for you
     """
     def __init__(self, cells, width, height,game):
+        self.totalEnergy = 0
+        self.topAverage = 0
         self.width = width
         self.height = height
         self._cells = cells
@@ -77,6 +81,7 @@ class GameMap:
         self.energyMap = np.zeros((self.width,self.height))
         self.dropoffPosList = [game.me.shipyard.position]
         self.myStartPositions = {}
+        self.aveShipCargo = 0
         
 
     def __getitem__(self, location):
@@ -103,6 +108,19 @@ class GameMap:
             if(self[item].is_occupied and self[item].ship.owner != self.game.me.id):
                 oppoNumber += 1
         return oppoNumber
+
+    def oppoCargo(self,pos):
+        posNeighbors = [pos]
+        posNeighbors.append(pos.directional_offset(Direction.North))
+        posNeighbors.append(pos.directional_offset(Direction.South))
+        posNeighbors.append(pos.directional_offset(Direction.East))
+        posNeighbors.append(pos.directional_offset(Direction.West))
+        maxOppoCargo = 0
+        for item in posNeighbors:
+            if(self[item].is_occupied and self[item].ship.owner != self.game.me.id)\
+                and self[item].ship.halite_amount > maxOppoCargo:
+                maxOppoCargo = self[item].ship.halite_amount
+        return maxOppoCargo
     
     def maxEnergyPositions(self, n = MAX_ENERGY_POINTS):
         positionList = []
@@ -130,7 +148,7 @@ class GameMap:
 
         convolvedMaxPos = []
         topAverage = 0
-        for i in range(20):
+        for i in range(15):
             thisMax = convolvedMap.max()
             maxList = list(np.flip(np.array(np.where(convolvedMap == thisMax)).T,1))
             topAverage += thisMax
@@ -138,7 +156,8 @@ class GameMap:
             for pos in maxList:
                 convolvedMap[pos[1]][pos[0]] = 0
 
-        topAverage = topAverage/20
+        topAverage = topAverage/15
+        self.topAverage = topAverage
 
         haliteSort1 = [(convolvedMaxPos[i],i) for i in range(len(convolvedMaxPos))]
         
@@ -147,13 +166,13 @@ class GameMap:
 
 
         disSort2 = sorted(haliteSort1,key = lambda x: max([abs(self.width*0.4-self.calculate_distance(calculate_position(x),self.dropoffPosList[i])) for i in range(len(self.dropoffPosList))]))
-        average = [(disSort2[i][0],disSort2[i][1]+3*i) for i in range(len(disSort2))]
+        average = [(disSort2[i][0],disSort2[i][1]+5*i) for i in range(len(disSort2))]
         average.sort(key = lambda x: x[1])
 
         while self[calculate_position(average[0])].structure:
             average[0][0][1]+=1
 
-        return [calculate_position(average[i]) for i in range(8)],[calculate_position(average[i]) for i in range(len(average))],topAverage
+        return [calculate_position(average[i]) for i in range(6)],[calculate_position(average[i]) for i in range(len(average))]
 
     def calculate_distance(self, source, target):
         """
@@ -222,7 +241,7 @@ class GameMap:
             secondary_moves.append((0,-1))
         return possible_moves,secondary_moves
 
-    def naive_navigate(self, ship, destination,maxHalite = False,finalReturn = False):
+    def naive_navigate(self, ship, destination,maxHalite = False,finalReturn = False,attack_mode = False):
         """
         Returns a singular safe move towards the destination.
 
@@ -237,6 +256,11 @@ class GameMap:
         secondary_choices = []
         invertDirections = []
         invert_choices = []
+
+        attackList = [(self.oppoCargo(ship.position),ship.position,Direction.Still)] if not self[ship.position].is_occupied else []
+        
+        oppoList =       [(self.opponentNumber(ship.position),ship.position,Direction.Still)] if not self[ship.position].is_occupied else []
+
         possible_moves,secondary_moves = self.get_unsafe_moves(ship.position, destination)
         
         for direction in possible_moves:
@@ -244,31 +268,46 @@ class GameMap:
             target_pos = ship.position.directional_offset(direction)
             if not self[target_pos].is_occupied or (finalReturn and (target_pos==ship.destination)):
                 choices.append((target_pos,direction))
-            elif self[target_pos].ship.owner != ship.owner and self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
-                choices.append((target_pos,direction))
+                oppoList.append((self.opponentNumber(target_pos),target_pos,direction))
+                attackList.append((self.oppoCargo(target_pos),target_pos,direction))
+            elif self[target_pos].ship.owner != ship.owner:
+                attackList.append((self.oppoCargo(target_pos),target_pos,direction))
+                if self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
+                    choices.append((target_pos,direction))
+                    oppoList.append((self.opponentNumber(target_pos),target_pos,direction))
+
 
         for direction in secondary_moves:
             target_pos = ship.position.directional_offset(direction)
             if not self[target_pos].is_occupied or (finalReturn and (target_pos==self.game.players[ship.owner].shipyard.position)):
                 secondary_choices.append((target_pos,direction))
-            elif self[target_pos].ship.owner != ship.owner and self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
-                secondary_choices.append((target_pos,direction))
+                oppoList.append((self.opponentNumber(target_pos),target_pos,direction))
+                attackList.append((self.oppoCargo(target_pos),target_pos,direction))
+            elif self[target_pos].ship.owner != ship.owner:
+                attackList.append((self.oppoCargo(target_pos),target_pos,direction))
+                if self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
+                    secondary_choices.append((target_pos,direction))
+                    oppoList.append((self.opponentNumber(target_pos),target_pos,direction))
+
 
         for direction in invertDirections:
             target_pos = ship.position.directional_offset(direction)
             if not self[target_pos].is_occupied or (finalReturn and (target_pos==self.game.players[ship.owner].shipyard.position)):
                 invert_choices.append((target_pos,direction))
-            elif self[target_pos].ship.owner != ship.owner and self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
-                invert_choices.append((target_pos,direction))
-
-        oppoList = [(self.opponentNumber(ship.position),ship.position,Direction.Still)] if not self[ship.position].is_occupied else []
-        for item in choices:
-            oppoList.append((self.opponentNumber(item[0]),item[0],item[1]))
-        for item in secondary_choices:
-            oppoList.append((self.opponentNumber(item[0]),item[0],item[1]))
-        for item in invert_choices:
-            oppoList.append((self.opponentNumber(item[0]),item[0],item[1]))
+                oppoList.append((self.opponentNumber(target_pos),target_pos,direction))
+                attackList.append((self.oppoCargo(target_pos),target_pos,direction))
+            elif self[target_pos].ship.owner != ship.owner:
+                attackList.append((self.oppoCargo(target_pos),target_pos,direction))
+                if self.calculate_distance(target_pos,self.game.players[ship.owner].shipyard.position)<5:
+                    invert_choices.append((target_pos,direction))
+                    oppoList.append((self.opponentNumber(target_pos),target_pos,direction))
+       
         oppoList.sort(key = lambda x : x[0])
+        attackList.sort(key = lambda x: x[0],reverse = True)
+        if attack_mode and ship.halite_amount<100 and len(attackList)>0 and attackList[0][0]>500:            
+            logging.info("ATTACK!!!")
+            self[attackList[0][1]].mark_unsafe(ship)
+            return attackList[0][2] 
         if(len(oppoList) == 0):
             pass # TO DO!
         elif(len(oppoList) == 1):
@@ -291,8 +330,8 @@ class GameMap:
             self[costMinChoice[0][0]].mark_unsafe(ship)
             return costMinChoice[0][1]
         elif not self[ship.position].is_occupied:
-            thisRand = random.randint(0,5)
-            if(thisRand<=4): # 6/7 chance stay
+            thisRand = random.randint(0,2)
+            if(thisRand<=0): # 6/7 chance stay
                 self[ship.position].mark_unsafe(ship)
                 return Direction.Still
         

@@ -17,6 +17,7 @@ import random
 #   (print statements) are reserved for the engine-bot communication.
 import logging
 import numpy as np
+import copy
 from timeit import default_timer as timer
 
 
@@ -32,27 +33,33 @@ me = game.me
 
 #constant control variables:
 RETURN_COEFF = 0.92  # above which percentage of MAX_HALITE we return
-IGNORE_COEFF = 0.05  # under which percentage of MAX_HALITE we ignore that cell
+IGNORE_COEFF = 0.04 # under which percentage of MAX_HALITE we ignore that cell
 EXPLORE_AGAIN = 0.25 # under which percentage of MAX_HALITE go back to explore
-LOCAL_RANDOM_TO_DESTINATION = 0.3 # coeffienent for transition from local random walk to heading to destination
-MAX_SHIP_SEED = 1
+LOCAL_RANDOM_TO_DESTINATION = 0.5 # coeffienent for transition from local random walk to heading to destination
+MAX_SHIP_SEED = 0.8
 MAX_ENERGY_POINTS = 10
-DISTANCE_TO_BUILD_DROPOFF = 12
-MAX_DROPOFF_SEED = 1/32
+DISTANCE_TO_BUILD_DROPOFF = 20
+MAX_DROPOFF_SEED = 1/28
+SPAWN_AVERAGE_HALITE = 160
+ATTACK_TIME = 300
+
+attack_mode = False
 
 MAX_SHIP = round(MAX_SHIP_SEED*game_map.width)
-MAX_DROPOFF_NUMBER = int(MAX_DROPOFF_SEED*game_map.width)
+MAX_DROPOFF_NUMBER = round(MAX_DROPOFF_SEED*game_map.width)
 #gamestages:
 if(constants.MAX_TURNS <450):
     FIRST_BUILD_SHIP = 80
     SECOND_MONEY_FOR_PORT = 120
     THIRD_BUILD_PORT = 180
     FOUTRH_STOP_BUILD_PORT = 350
+    ATTACK_TIME = 320
 else:
     FIRST_BUILD_SHIP = 100
     SECOND_MONEY_FOR_PORT = 150
     THIRD_BUILD_PORT = 200
     FOUTRH_STOP_BUILD_PORT = 400
+    ATTACK_TIME = 360
 ship_status = {}
 
 
@@ -61,26 +68,41 @@ ship_status = {}
 # end = timer() 
 # logging.info("time!! ")
 # logging.info(end - start)
-# 0.002
-totalEnergy = 0
+# 0.002s
 for i in range(game_map.width):
     for j in range(game_map.height):
-        totalEnergy += game_map[Position(j,i)].halite_amount
+        game_map.totalEnergy += game_map[Position(j,i)].halite_amount
 playerNumber = len(game.players.keys())
-aveEnergy = totalEnergy/game_map.width/game_map.height
-if aveEnergy<140:
-    MAX_SHIP = 28-2*playerNumber
-    if(game_map.width<48):
-        MAX_DROPOFF_NUMBER = 1
-elif aveEnergy<180:
-    MAX_SHIP = 38-2*playerNumber
-elif game_map.width<50:
-    MAX_SHIP = 46-2*playerNumber
-else:
-    MAX_SHIP = 54-2*playerNumber
+aveEnergy = game_map.totalEnergy/game_map.width/game_map.height
 
+# if(game_map.width<50):
+#     if aveEnergy<130:
+#         MAX_SHIP = 30
+#         if(game_map.width<48):
+#             MAX_DROPOFF_NUMBER = 1
+#     elif aveEnergy<170:
+#         MAX_SHIP = 40
+#     else:
+#         MAX_SHIP = 50
+
+if aveEnergy<130:
+    MAX_SHIP = 38-2*playerNumber
+    if(game_map.width<50):
+        MAX_DROPOFF_NUMBER = 1
+elif aveEnergy<170:
+    MAX_SHIP = 44-2*playerNumber
+elif game_map.width<50:
+    MAX_SHIP = 50-2*playerNumber
+else:
+    MAX_SHIP = 56-2*playerNumber
+
+if(playerNumber == 2 and game_map.width>50):
+    MAX_DROPOFF_NUMBER += 1
+
+if playerNumber == 2 and game_map.width>50:
+    MAX_SHIP+=10
 # As soon as you call "ready" function below, the 2 second per turn timer will start.
-game.ready("bot13")
+game.ready("bigNumber")
 
 # Now that your bot is initialized, save a message to yourself in the log file with some important information.
 #   Here, you log here your id, which you can always fetch from the game object by using my_id.
@@ -99,7 +121,7 @@ while True:
     maxEnergyPos.sort(key = lambda x: game_map.calculate_distance(me.shipyard.position,x))
     maxEnergyPos = maxEnergyPos[0:MAX_ENERGY_POINTS]
 
-    bestDropOffPosList, maxAreaPos, topAverage = game_map.convolveMax()
+    bestDropOffPosList, maxAreaPos = game_map.convolveMax()
     maxAreaPos.sort(key = lambda x: game_map.calculate_distance(me.shipyard.position,x))
     logging.info("maxAreaPos")
     logging.info(maxAreaPos)
@@ -110,6 +132,8 @@ while True:
     #   end of the turn.
     command_queue = []
     doneList = []
+    if game.turn_number > ATTACK_TIME:
+        attack_mode = True
     for ship in me.get_ships():
         # first mark all the ships that can't move:
         if(ship.halite_amount<game_map[ship.position].halite_amount*0.1):
@@ -148,30 +172,36 @@ while True:
                     ship_status[ship.id] = "heading"
                     ship.destination = random.choice(maxEnergyPos[0:3])
 
-            if game_map.calculate_distance(ship.position,thisDropOff.position)>(constants.MAX_TURNS-game.turn_number)-18:
+            if game_map.calculate_distance(ship.position,thisDropOff.position)>(constants.MAX_TURNS-game.turn_number)-12:
                 ship_status[ship.id] = "finalReturning"
                 ship.destination = thisDropOff.position
                 move = game_map.naive_navigate(ship, thisDropOff.position,finalReturn = True)
                 
                 doneList.append(ship.id)
                 del game_map.myStartPositions[ship.position]
-                if(move == "buildDropoff" and me.halite_amount > constants.DROPOFF_COST+constants.SHIP_COST and not game_map[ship.position].has_structure):
-                    command_queue.append(ship.make_dropoff())
-                    continue
+                if(move == "buildDropoff"):
+                    if (me.halite_amount > constants.DROPOFF_COST+constants.SHIP_COST and not game_map[ship.position].has_structure and minDis>8 and ship.halite_amount>800):
+                        command_queue.append(ship.make_dropoff())
+                        continue
+                    else:
+                        game_map[ship.position].mark_unsafe(ship)
+                        command_queue.append(ship.stay_still())
+                        continue
                 target_pos = ship.position.directional_offset(move)
                 game_map[ship.position.directional_offset(move)].mark_unsafe(ship)
                 command_queue.append(ship.move(move))
                 if(target_pos in game_map.myStartPositions.keys()):
                     still_not_resolve = True
-                    ship = game_map.myStartPositions[target_pos]
+                    ship = copy.copy(game_map.myStartPositions[target_pos])
                 continue
 
             if ship_status[ship.id] == "finalReturning":
-                move = game_map.naive_navigate(ship, thisDropOff.position,finalReturn = True)
+                move = game_map.naive_navigate(ship, thisDropOff.position,finalReturn = True,attack_mode = attack_mode)
                 
                 doneList.append(ship.id)
                 del game_map.myStartPositions[ship.position]
                 if move == "buildDropoff":
+                    game_map[ship.position].mark_unsafe(ship)
                     command_queue.append(ship.stay_still())
                     continue
                 target_pos = ship.position.directional_offset(move)
@@ -204,6 +234,7 @@ while True:
                             command_queue.append(ship.make_dropoff())
                             continue
                         else:
+                            game_map[ship.position].mark_unsafe(ship)
                             command_queue.append(ship.stay_still())
                             continue
                     target_pos = ship.position.directional_offset(move)
@@ -225,7 +256,7 @@ while True:
                             localMax = newAmount
                             localMaxPos = ship.position+Position(i-3,j-3)
                         localSum += newAmount
-                if localSum < topAverage*LOCAL_RANDOM_TO_DESTINATION:
+                if localSum < game_map.topAverage*LOCAL_RANDOM_TO_DESTINATION:
                     logging.info("backToHeading!!")
                     ship_status[ship.id] = "heading"
                     ship.destination = maxsortedforthisship[0]
@@ -243,7 +274,7 @@ while True:
                         del game_map.myStartPositions[ship.position]
                         continue
                     else:
-                        move = game_map.naive_navigate(ship, ship.destination,maxHalite = True)
+                        move = game_map.naive_navigate(ship, ship.destination,maxHalite = True,attack_mode = attack_mode)
                         
                         doneList.append(ship.id)
                         del game_map.myStartPositions[ship.position]
@@ -252,6 +283,7 @@ while True:
                                 command_queue.append(ship.make_dropoff())
                                 continue
                             else:
+                                game_map[ship.position].mark_unsafe(ship)
                                 command_queue.append(ship.stay_still())
                                 continue
                         target_pos = ship.position.directional_offset(move)
@@ -299,7 +331,9 @@ while True:
                         continue
                     else:
                         pass # heading to dropoff position
-                elif(game.turn_number>THIRD_BUILD_PORT and game.turn_number<FOUTRH_STOP_BUILD_PORT and len(me.get_dropoffs()) < MAX_DROPOFF_NUMBER and min([game_map.calculate_distance(ship.position,bestDropOffPosList[i]) for i in range(len(bestDropOffPosList))])< DISTANCE_TO_BUILD_DROPOFF):
+                elif(game.turn_number>THIRD_BUILD_PORT and game.turn_number<FOUTRH_STOP_BUILD_PORT and len(me.get_dropoffs()) < MAX_DROPOFF_NUMBER \
+                        and min([game_map.calculate_distance(ship.position,bestDropOffPosList[i]) for i in range(len(bestDropOffPosList))])< DISTANCE_TO_BUILD_DROPOFF):
+                    
                     disList = [game_map.calculate_distance(ship.position,bestDropOffPosList[i]) for i in range(len(bestDropOffPosList))]
                     minIndex = disList.index(min(disList))
                     ship.destination = bestDropOffPosList[minIndex]
@@ -309,7 +343,7 @@ while True:
                 if ship.destination is None:
                     ship.destination = maxsortedforthisship[0]
 
-                move = game_map.naive_navigate(ship, ship.destination,maxHalite = True)                
+                move = game_map.naive_navigate(ship, ship.destination,maxHalite = True,attack_mode = attack_mode)                
                 
                 doneList.append(ship.id)
                 del game_map.myStartPositions[ship.position]
@@ -318,6 +352,7 @@ while True:
                         command_queue.append(ship.make_dropoff())
                         continue
                     else:
+                        game_map[ship.position].mark_unsafe(ship)
                         command_queue.append(ship.stay_still())
                         continue
                 
@@ -334,18 +369,32 @@ while True:
                 continue
 
     # spawn ships and ports depends on different stages of the game:
-    if game.turn_number <= FIRST_BUILD_SHIP:
-        if len(me.get_ships())<MAX_SHIP and me.halite_amount >= constants.SHIP_COST and not game_map[me.shipyard].is_occupied:
+    if game.turn_number<= FIRST_BUILD_SHIP:
+        if game_map.topAverage> 64*SPAWN_AVERAGE_HALITE and me.halite_amount >= constants.SHIP_COST \
+            and game.turn_number<constants.MAX_TURNS-80 and not game_map[me.shipyard].is_occupied:
             command_queue.append(me.shipyard.spawn())
     elif game.turn_number<= SECOND_MONEY_FOR_PORT:
-        if len(me.get_ships())<MAX_SHIP and me.halite_amount >= constants.DROPOFF_COST+constants.SHIP_COST and not game_map[me.shipyard].is_occupied:
+        if game_map.topAverage> 64*SPAWN_AVERAGE_HALITE and me.halite_amount >= constants.SHIP_COST \
+            and game.turn_number<constants.MAX_TURNS-80 and not game_map[me.shipyard].is_occupied \
+            and game_map.aveShipCargo>400:
             command_queue.append(me.shipyard.spawn())
-    elif game.turn_number <= THIRD_BUILD_PORT:
-        if len(me.get_ships())<MAX_SHIP and me.halite_amount >= constants.DROPOFF_COST and not game_map[me.shipyard].is_occupied:
+    elif game.turn_number<= FOUTRH_STOP_BUILD_PORT:
+        if game_map.topAverage> 64*SPAWN_AVERAGE_HALITE and me.halite_amount >= constants.SHIP_COST+constants.DROPOFF_COST \
+            and game.turn_number<constants.MAX_TURNS-80 and not game_map[me.shipyard].is_occupied \
+            and game_map.aveShipCargo>300:
             command_queue.append(me.shipyard.spawn())
-    else:
-        if game.turn_number <= constants.MAX_TURNS-100 and len(me.get_ships())<MAX_SHIP*0.7 and me.halite_amount >= constants.SHIP_COST and not game_map[me.shipyard].is_occupied:
-            command_queue.append(me.shipyard.spawn())
+    # if game.turn_number <= FIRST_BUILD_SHIP:
+    #     if len(me.get_ships())<MAX_SHIP and me.halite_amount >= constants.SHIP_COST and not game_map[me.shipyard].is_occupied:
+    #         command_queue.append(me.shipyard.spawn())
+    # elif game.turn_number<= SECOND_MONEY_FOR_PORT:
+    #     if len(me.get_ships())<MAX_SHIP and me.halite_amount >= constants.DROPOFF_COST+constants.SHIP_COST and not game_map[me.shipyard].is_occupied:
+    #         command_queue.append(me.shipyard.spawn())
+    # elif game.turn_number <= THIRD_BUILD_PORT:
+    #     if len(me.get_ships())<MAX_SHIP and me.halite_amount >= constants.DROPOFF_COST and not game_map[me.shipyard].is_occupied:
+    #         command_queue.append(me.shipyard.spawn())
+    # else:
+    #     if game.turn_number <= constants.MAX_TURNS-100 and len(me.get_ships())<MAX_SHIP*0.7 and me.halite_amount >= constants.SHIP_COST and not game_map[me.shipyard].is_occupied:
+    #         command_queue.append(me.shipyard.spawn())
     # Send your moves back to the game environment, ending this turn.
     game.end_turn(command_queue)
 
